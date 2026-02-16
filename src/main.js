@@ -1,58 +1,84 @@
 import "./styles.css";
 import { renderApp, showView, toast, formatTime, escapeHtml } from "./ui.js";
 import { ensureAuthedOrRedirect, api } from "./spotify.js";
-import { setStatus } from "./ui.js";
+import { createNavigator } from "./nav.js";
 
 const POLL = parseInt(import.meta.env.VITE_POLL_INTERVAL_MS || "2500", 10);
 
-let now = {
-  trackId: null,
-  trackUri: null,
-  name: "Song Name",
-  artist: "Artist Name",
-  album: "Album Name",
-  artUrl: null,
-  isPlaying: false,
-  progressMs: 0,
-  durationMs: 0,
-  liked: false
-};
-
+let currentView = "Now"; // Now | Library | Playlist
 let playlists = [];
 let selectedPlaylist = null;
 let playlistTracks = [];
 
+let now = {
+  name: "Not playing",
+  artist: "-",
+  album: "-",
+  artUrl: null,
+  isPlaying: false,
+  progressMs: 0,
+  durationMs: 0
+};
+
 function $(id){ return document.getElementById(id); }
+
+const nav = createNavigator({
+  getItems: () => Array.from(document.querySelectorAll(`#view${currentView} .nav-item`)),
+  onActivate: (el) => el.click(),
+  onBack: () => back()
+});
+
+function goto(view) {
+  currentView = view;
+  showView(view);
+  nav.setIndex(0);
+}
+
+function back() {
+  if (currentView === "Playlist") {
+    goto("Library");
+    renderLibraryView();
+  } else if (currentView === "Library") {
+    goto("Now");
+    renderNowView();
+  }
+}
+
+/* ---------- Renders (all nav-item marked) ---------- */
 
 function renderNowView(){
   $("viewNow").innerHTML = `
     <div class="now">
       <div class="nowTop">
         <div>
-          <div id="cover" class="cover">${now.artUrl ? `<img src="${now.artUrl}" alt="cover">` : ""}</div>
+          <div class="cover">${now.artUrl ? `<img src="${now.artUrl}" alt="cover">` : ""}</div>
         </div>
 
         <div class="meta">
-          <h2 id="songTitle">${escapeHtml(now.name)}</h2>
+          <h2>${escapeHtml(now.name)}</h2>
+
           <div class="sub">
-            <div id="songArtist">${escapeHtml(now.artist)}</div>
-            <div id="songAlbum">${escapeHtml(now.album)}</div>
+            <div>${escapeHtml(now.artist)}</div>
+            <div>${escapeHtml(now.album)}</div>
+            <div id="statusLine"> </div>
           </div>
 
           <div class="barRow">
-            <div class="time" id="tCur">${formatTime(now.progressMs)}</div>
-            <input id="progress" class="progress" type="range" min="0" max="${Math.max(1, now.durationMs)}" value="${Math.min(now.progressMs, now.durationMs)}" />
-            <div class="time" id="tDur">${formatTime(now.durationMs)}</div>
+            <div class="time">${formatTime(now.progressMs)}</div>
+            <input id="progress" class="progress" type="range"
+              min="0" max="${Math.max(1, now.durationMs)}"
+              value="${Math.min(now.progressMs, now.durationMs)}" />
+            <div class="time">${formatTime(now.durationMs)}</div>
           </div>
         </div>
       </div>
 
       <div class="bottomBar">
-        <button id="btnPlay" class="iconBtn primary" title="Play/Pause">${now.isPlaying ? "⏸" : "▶"}</button>
-        <button id="btnPrev" class="iconBtn" title="Previous">⏮</button>
-        <button id="btnNext" class="iconBtn" title="Next">⏭</button>
-        <button id="btnLike" class="iconBtn ${now.liked ? "active":""}" title="Like">${now.liked ? "♥" : "♡"}</button>
-        <button id="btnLibrary" class="iconBtn" title="Library">Library</button>
+        <button id="btnPrev" class="iconBtn big nav-item" title="Previous">⏮</button>
+        <button id="btnPlay" class="iconBtn big nav-item" title="Play/Pause">${now.isPlaying ? "⏸" : "▶"}</button>
+        <button id="btnNext" class="iconBtn big nav-item" title="Next">⏭</button>
+        <button id="btnLibrary" class="iconBtn nav-item" title="Library">Library</button>
+        <button id="btnToggle" class="iconBtn nav-item" title="Toggle Art">Toggle</button>
       </div>
     </div>
   `;
@@ -60,13 +86,20 @@ function renderNowView(){
   $("btnPlay").onclick = togglePlayPause;
   $("btnPrev").onclick = previousTrack;
   $("btnNext").onclick = nextTrack;
-  $("btnLike").onclick = toggleLikeCurrent;
-  $("btnLibrary").onclick = () => { showView("Library"); renderLibraryView(); };
+
+  $("btnLibrary").onclick = () => {
+    goto("Library");
+    renderLibraryView();
+  };
+
+  $("btnToggle").onclick = () => toast("Toggle reserved (Cover ↔ Visualizer)");
 
   $("progress").addEventListener("change", async (e) => {
     const ms = parseInt(e.target.value, 10);
     if (Number.isFinite(ms)) await seekTo(ms);
   });
+
+  nav.sync();
 }
 
 function renderLibraryView(){
@@ -74,55 +107,64 @@ function renderLibraryView(){
     <div class="lib">
       <div class="libHeader">
         <div style="font-weight:900; font-size:18px;">Library</div>
-        <button id="libBack" class="iconBtn" title="Back">←</button>
+        <button id="libBack" class="iconBtn nav-item" title="Back">←</button>
       </div>
-      <div id="grid" class="libGrid">
-        ${playlists.length ? "" : `<div style="color:#333;">Loading playlists…</div>`}
-      </div>
+      <div id="grid" class="libGrid"></div>
     </div>
   `;
 
-  $("libBack").onclick = () => { showView("Now"); };
+  $("libBack").onclick = () => back();
 
   const grid = $("grid");
-  if (!playlists.length) return;
+  if (!playlists.length){
+    grid.innerHTML = `<div style="color:#333;">Loading playlists…</div>`;
+    nav.sync();
+    return;
+  }
 
   grid.innerHTML = "";
-  playlists.forEach(p => {
+  playlists.forEach((p) => {
     const img = p.images?.[0]?.url || "";
     const el = document.createElement("div");
-    el.className = "tile";
+    el.className = "tile nav-item";
     el.innerHTML = `
-      ${img ? `<img src="${img}" alt="">` : `<img alt="" />`}
+      ${img ? `<img src="${img}" alt="">` : `<img alt="">`}
       <div class="tname">${escapeHtml(p.name)}</div>
     `;
     el.onclick = async () => {
       selectedPlaylist = p;
-      showView("Playlist");
+      goto("Playlist");
       renderPlaylistView();
+
       await loadAllPlaylistTracks(p.id);
       renderPlaylistTracks();
+      nav.setIndex(0);
     };
     grid.appendChild(el);
   });
+
+  nav.setIndex(0);
 }
 
 function renderPlaylistView(){
   $("viewPlaylist").innerHTML = `
     <div class="pl">
       <div class="plHeader">
-        <button id="plBack" class="iconBtn" title="Back">←</button>
+        <button id="plBack" class="iconBtn nav-item" title="Back">←</button>
         <div style="font-weight:900; font-size:16px; text-align:center; flex:1;">
           ${escapeHtml(selectedPlaylist?.name || "Playlist")}
         </div>
         <div style="width:44px;"></div>
       </div>
+
       <div id="trackList" class="trackList">
         <div style="color:#333;">Loading tracks…</div>
       </div>
     </div>
   `;
-  $("plBack").onclick = () => { showView("Library"); renderLibraryView(); };
+
+  $("plBack").onclick = () => back();
+  nav.sync();
 }
 
 function renderPlaylistTracks(){
@@ -130,68 +172,58 @@ function renderPlaylistTracks(){
   if (!list) return;
 
   if (!playlistTracks.length){
-    list.innerHTML = `<div style="color:#333;">No tracks found.</div>`;
+    list.innerHTML = `<div style="color:#333;">No tracks found or not accessible.</div>`;
+    nav.sync();
     return;
   }
 
   list.innerHTML = "";
   playlistTracks.forEach((t, i) => {
     const el = document.createElement("div");
-    el.className = "trackRow";
+    el.className = "trackRow nav-item";
     el.innerHTML = `
-      <div class="title">${i+1}. ${escapeHtml(t.name)}</div>
+      <div class="title">${i + 1}. ${escapeHtml(t.name)}</div>
       <div class="artist">${escapeHtml(t.artists?.map(a => a.name).join(", ") || "")}</div>
     `;
     el.onclick = async () => {
       await api("/me/player/play", { method:"PUT", body: JSON.stringify({ uris: [t.uri] }) });
       toast(`Playing: ${t.name}`);
-      showView("Now");
-      // Force immediate refresh
+      goto("Now");
+      renderNowView();
       setTimeout(updateNowPlaying, 500);
     };
     list.appendChild(el);
   });
+
+  nav.setIndex(0);
 }
 
-/* ========= Spotify actions ========= */
+/* ---------- Spotify ---------- */
 
 async function updateNowPlaying(){
   const data = await api("/me/player/currently-playing");
+
   if (!data?.item){
-    now = { ...now, trackId:null, trackUri:null, name:"Not playing", artist:"-", album:"-", artUrl:null, isPlaying:false, progressMs:0, durationMs:0 };
-    renderNowView();
+    now = { ...now, name:"Not playing", artist:"-", album:"-", artUrl:null, isPlaying:false, progressMs:0, durationMs:0 };
+    if (currentView === "Now") renderNowView();
     return;
   }
 
   const track = data.item;
-  const artUrl = track.album?.images?.[0]?.url || null;
-
-  now.trackId = track.id;
-  now.trackUri = track.uri;
   now.name = track.name || "Unknown";
   now.artist = track.artists?.map(a => a.name).join(", ") || "-";
   now.album = track.album?.name || "-";
-  now.artUrl = artUrl;
+  now.artUrl = track.album?.images?.[0]?.url || null;
   now.isPlaying = !!data.is_playing;
   now.progressMs = data.progress_ms || 0;
   now.durationMs = track.duration_ms || 0;
 
-  // check liked state (official endpoint)
-//   if (now.trackId){
-//     const likedArr = await api(`/me/tracks/contains?ids=${encodeURIComponent(now.trackId)}`);
-//     if (Array.isArray(likedArr)) now.liked = !!likedArr[0];
-//   }
-
-  // Only re-render if we're on Now view
-  if (!$("viewNow").classList.contains("hidden")) renderNowView();
+  if (currentView === "Now") renderNowView();
 }
 
 async function togglePlayPause(){
-  if (now.isPlaying){
-    await api("/me/player/pause", { method:"PUT" });
-  } else {
-    await api("/me/player/play", { method:"PUT" });
-  }
+  if (now.isPlaying) await api("/me/player/pause", { method:"PUT" });
+  else await api("/me/player/play", { method:"PUT" });
   setTimeout(updateNowPlaying, 400);
 }
 
@@ -210,23 +242,7 @@ async function seekTo(ms){
   setTimeout(updateNowPlaying, 250);
 }
 
-// async function toggleLikeCurrent(){
-//   if (!now.trackId) return;
-
-//   if (!now.liked){
-//     // Save track to Liked Songs (official)
-//     await api(`/me/tracks?ids=${encodeURIComponent(now.trackId)}`, { method:"PUT" }); // Save Tracks for User [web:206]
-//     now.liked = true;
-//     toast("Added to Liked Songs");
-//   } else {
-//     await api(`/me/tracks?ids=${encodeURIComponent(now.trackId)}`, { method:"DELETE" });
-//     now.liked = false;
-//     toast("Removed from Liked Songs");
-//   }
-//   renderNowView();
-// }
-
-/* ========= Library / playlist loading ========= */
+/* ---------- Playlists ---------- */
 
 async function loadPlaylists(){
   const data = await api("/me/playlists?limit=50");
@@ -239,30 +255,35 @@ async function loadAllPlaylistTracks(playlistId){
   const limit = 100;
 
   while (true){
-    const page = await api(`/playlists/${playlistId}/tracks?limit=${limit}&offset=${offset}`); // paging via limit/offset [web:201]
-    const items = page?.items || [];
-    const tracks = items.map(it => it?.track).filter(Boolean);
+    const page = await api(`/playlists/${playlistId}/tracks?limit=${limit}&offset=${offset}`);
+    if (!page) break;
+
+    const items = page.items || [];
+    const tracks = items
+      .map(it => it?.track || null)
+      .filter(t => t && t.type === "track" && t.uri);
+
     playlistTracks.push(...tracks);
 
-    if (!page?.next || items.length === 0) break;
+    if (!page.next) break;
     offset += limit;
-
-    // Safety cap (optional): remove if you want truly all
-    if (playlistTracks.length > 2000) break;
+    if (offset > 5000) break;
   }
 }
 
-/* ========= Boot ========= */
+/* ---------- Boot ---------- */
+
 async function main(){
   renderApp(document.getElementById("app"));
+  nav.attach();
+
   await ensureAuthedOrRedirect();
 
+  goto("Now");
   renderNowView();
-  showView("Now");
 
   await loadPlaylists();
 
-  // Keep library view snappy (renders from cached playlists)
   setInterval(updateNowPlaying, Number.isFinite(POLL) ? POLL : 2500);
   await updateNowPlaying();
 }

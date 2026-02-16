@@ -4,8 +4,9 @@ export function renderApp(root) {
       <div id="viewNow" class="view"></div>
       <div id="viewLibrary" class="view hidden"></div>
       <div id="viewPlaylist" class="view hidden"></div>
-      <div id="toast" class="toast hidden"></div>
     </div>
+
+    <div id="toast" class="toast hidden"></div>
   `;
 }
 
@@ -18,15 +19,11 @@ export function showView(name) {
 
 export function toast(msg, ms = 2200) {
   const el = document.getElementById("toast");
+  if (!el) return;
   el.textContent = msg;
   el.classList.remove("hidden");
   clearTimeout(el._t);
   el._t = setTimeout(() => el.classList.add("hidden"), ms);
-}
-
-export function setStatus(msg) {
-  const el = document.getElementById("statusLine");
-  if (el) el.textContent = msg || "";
 }
 
 export function formatTime(ms) {
@@ -38,9 +35,15 @@ export function formatTime(ms) {
 
 export function escapeHtml(s) {
   return String(s || "")
-    .replaceAll("&","&amp;")
-    .replaceAll("<","&lt;")
-    .replaceAll(">","&gt;")
-    .replaceAll('"',"&quot;")
-    .replaceAll("'","&#039;");
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+/* spotify.js may call this; safe no-op if element isn't present */
+export function setStatus(msg) {
+  const el = document.getElementById("statusLine");
+  if (el) el.textContent = msg || "";
 }
