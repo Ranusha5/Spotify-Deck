@@ -1,6 +1,7 @@
 import "./styles.css";
 import { renderApp, showView, toast, formatTime, escapeHtml } from "./ui.js";
 import { ensureAuthedOrRedirect, api } from "./spotify.js";
+import { setStatus } from "./ui.js";
 
 const POLL = parseInt(import.meta.env.VITE_POLL_INTERVAL_MS || "2500", 10);
 
@@ -157,7 +158,7 @@ function renderPlaylistTracks(){
 async function updateNowPlaying(){
   const data = await api("/me/player/currently-playing");
   if (!data?.item){
-    now = { ...now, trackId:null, trackUri:null, name:"Not playing", artist:"-", album:"-", artUrl:null, isPlaying:false, progressMs:0, durationMs:0, liked:false };
+    now = { ...now, trackId:null, trackUri:null, name:"Not playing", artist:"-", album:"-", artUrl:null, isPlaying:false, progressMs:0, durationMs:0 };
     renderNowView();
     return;
   }
@@ -176,10 +177,10 @@ async function updateNowPlaying(){
   now.durationMs = track.duration_ms || 0;
 
   // check liked state (official endpoint)
-  if (now.trackId){
-    const likedArr = await api(`/me/tracks/contains?ids=${encodeURIComponent(now.trackId)}`);
-    if (Array.isArray(likedArr)) now.liked = !!likedArr[0];
-  }
+//   if (now.trackId){
+//     const likedArr = await api(`/me/tracks/contains?ids=${encodeURIComponent(now.trackId)}`);
+//     if (Array.isArray(likedArr)) now.liked = !!likedArr[0];
+//   }
 
   // Only re-render if we're on Now view
   if (!$("viewNow").classList.contains("hidden")) renderNowView();
@@ -209,21 +210,21 @@ async function seekTo(ms){
   setTimeout(updateNowPlaying, 250);
 }
 
-async function toggleLikeCurrent(){
-  if (!now.trackId) return;
+// async function toggleLikeCurrent(){
+//   if (!now.trackId) return;
 
-  if (!now.liked){
-    // Save track to Liked Songs (official)
-    await api(`/me/tracks?ids=${encodeURIComponent(now.trackId)}`, { method:"PUT" }); // Save Tracks for User [web:206]
-    now.liked = true;
-    toast("Added to Liked Songs");
-  } else {
-    await api(`/me/tracks?ids=${encodeURIComponent(now.trackId)}`, { method:"DELETE" });
-    now.liked = false;
-    toast("Removed from Liked Songs");
-  }
-  renderNowView();
-}
+//   if (!now.liked){
+//     // Save track to Liked Songs (official)
+//     await api(`/me/tracks?ids=${encodeURIComponent(now.trackId)}`, { method:"PUT" }); // Save Tracks for User [web:206]
+//     now.liked = true;
+//     toast("Added to Liked Songs");
+//   } else {
+//     await api(`/me/tracks?ids=${encodeURIComponent(now.trackId)}`, { method:"DELETE" });
+//     now.liked = false;
+//     toast("Removed from Liked Songs");
+//   }
+//   renderNowView();
+// }
 
 /* ========= Library / playlist loading ========= */
 
