@@ -11,7 +11,7 @@ const SCOPES = [
   "user-modify-playback-state",
   "user-library-read",
   "playlist-read-private",
-  "playlist-read-collaborative"
+  "playlist-read-collaborative",
 ];
 
 const STORAGE = {
