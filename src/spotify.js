@@ -1,4 +1,4 @@
-import { setStatus } from "./ui.js";
+// import { setStatus } from "./ui.js";
 
 const AUTH_ENDPOINT = "https://accounts.spotify.com/authorize";
 const TOKEN_ENDPOINT = "https://accounts.spotify.com/api/token";
