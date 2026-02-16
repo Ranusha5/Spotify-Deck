@@ -1,207 +1,277 @@
 import "./styles.css";
-import { renderShell, setStatus, formatTime, escapeHtml, toast } from "./ui.js";
-import { ensureAuthedOrRedirect, api, logout } from "./spotify.js";
+import { renderApp, showView, toast, formatTime, escapeHtml } from "./ui.js";
+import { ensureAuthedOrRedirect, api } from "./spotify.js";
 
 const POLL = parseInt(import.meta.env.VITE_POLL_INTERVAL_MS || "2500", 10);
 
-let showingCoverArt = true;
-let isPlaying = false;
-let lastNowId = null;
+let now = {
+  trackId: null,
+  trackUri: null,
+  name: "Song Name",
+  artist: "Artist Name",
+  album: "Album Name",
+  artUrl: null,
+  isPlaying: false,
+  progressMs: 0,
+  durationMs: 0,
+  liked: false
+};
 
 let playlists = [];
-let currentPlaylist = null;
+let selectedPlaylist = null;
+let playlistTracks = [];
 
 function $(id){ return document.getElementById(id); }
 
-function wireUI(){
-  $("logoutBtn").addEventListener("click", () => {
-    logout();
-    // No login page: immediately re-auth
-    window.location.reload();
-  });
+function renderNowView(){
+  $("viewNow").innerHTML = `
+    <div class="now">
+      <div class="nowTop">
+        <div>
+          <div id="cover" class="cover">${now.artUrl ? `<img src="${now.artUrl}" alt="cover">` : ""}</div>
+        </div>
 
-  $("toggleArtBtn").addEventListener("click", () => {
-    showingCoverArt = !showingCoverArt;
-    lastNowId = null;
-    updateNowPlaying();
-  });
+        <div class="meta">
+          <h2 id="songTitle">${escapeHtml(now.name)}</h2>
+          <div class="sub">
+            <div id="songArtist">${escapeHtml(now.artist)}</div>
+            <div id="songAlbum">${escapeHtml(now.album)}</div>
+          </div>
 
-  $("prevBtn").addEventListener("click", previousTrack);
-  $("nextBtn").addEventListener("click", nextTrack);
-  $("playPauseBtn").addEventListener("click", togglePlayPause);
+          <div class="barRow">
+            <div class="time" id="tCur">${formatTime(now.progressMs)}</div>
+            <input id="progress" class="progress" type="range" min="0" max="${Math.max(1, now.durationMs)}" value="${Math.min(now.progressMs, now.durationMs)}" />
+            <div class="time" id="tDur">${formatTime(now.durationMs)}</div>
+          </div>
+        </div>
+      </div>
 
-  $("progressBar").addEventListener("change", (e) => {
+      <div class="bottomBar">
+        <button id="btnPlay" class="iconBtn primary" title="Play/Pause">${now.isPlaying ? "⏸" : "▶"}</button>
+        <button id="btnPrev" class="iconBtn" title="Previous">⏮</button>
+        <button id="btnNext" class="iconBtn" title="Next">⏭</button>
+        <button id="btnLike" class="iconBtn ${now.liked ? "active":""}" title="Like">${now.liked ? "♥" : "♡"}</button>
+        <button id="btnLibrary" class="iconBtn" title="Library">Library</button>
+      </div>
+    </div>
+  `;
+
+  $("btnPlay").onclick = togglePlayPause;
+  $("btnPrev").onclick = previousTrack;
+  $("btnNext").onclick = nextTrack;
+  $("btnLike").onclick = toggleLikeCurrent;
+  $("btnLibrary").onclick = () => { showView("Library"); renderLibraryView(); };
+
+  $("progress").addEventListener("change", async (e) => {
     const ms = parseInt(e.target.value, 10);
-    if (Number.isFinite(ms)) seekTo(ms);
-  });
-
-  $("volumeControl").addEventListener("change", (e) => {
-    const v = parseInt(e.target.value, 10);
-    if (Number.isFinite(v)) setVolume(v);
-  });
-
-  window.addEventListener("keydown", (e) => {
-    if (e.code === "Space"){ e.preventDefault(); togglePlayPause(); }
-    if (e.code === "ArrowRight"){ nextTrack(); }
-    if (e.code === "ArrowLeft"){ previousTrack(); }
-    if (e.code === "ArrowUp"){ e.preventDefault(); adjustVolume(+5); }
-    if (e.code === "ArrowDown"){ e.preventDefault(); adjustVolume(-5); }
-    if (e.key?.toLowerCase() === "v"){ showingCoverArt = !showingCoverArt; lastNowId = null; updateNowPlaying(); }
+    if (Number.isFinite(ms)) await seekTo(ms);
   });
 }
 
-async function loadPlaylists(){
-  const data = await api("/me/playlists?limit=50");
-  if (!data?.items) return;
-  playlists = data.items;
-  renderPlaylists();
+function renderLibraryView(){
+  $("viewLibrary").innerHTML = `
+    <div class="lib">
+      <div class="libHeader">
+        <div style="font-weight:900; font-size:18px;">Library</div>
+        <button id="libBack" class="iconBtn" title="Back">←</button>
+      </div>
+      <div id="grid" class="libGrid">
+        ${playlists.length ? "" : `<div style="color:#333;">Loading playlists…</div>`}
+      </div>
+    </div>
+  `;
+
+  $("libBack").onclick = () => { showView("Now"); };
+
+  const grid = $("grid");
+  if (!playlists.length) return;
+
+  grid.innerHTML = "";
+  playlists.forEach(p => {
+    const img = p.images?.[0]?.url || "";
+    const el = document.createElement("div");
+    el.className = "tile";
+    el.innerHTML = `
+      ${img ? `<img src="${img}" alt="">` : `<img alt="" />`}
+      <div class="tname">${escapeHtml(p.name)}</div>
+    `;
+    el.onclick = async () => {
+      selectedPlaylist = p;
+      showView("Playlist");
+      renderPlaylistView();
+      await loadAllPlaylistTracks(p.id);
+      renderPlaylistTracks();
+    };
+    grid.appendChild(el);
+  });
 }
 
-function renderPlaylists(){
-  const list = $("playlistList");
-  list.innerHTML = "";
-  if (!playlists.length){
-    list.innerHTML = `<div class="muted">No playlists found.</div>`;
+function renderPlaylistView(){
+  $("viewPlaylist").innerHTML = `
+    <div class="pl">
+      <div class="plHeader">
+        <button id="plBack" class="iconBtn" title="Back">←</button>
+        <div style="font-weight:900; font-size:16px; text-align:center; flex:1;">
+          ${escapeHtml(selectedPlaylist?.name || "Playlist")}
+        </div>
+        <div style="width:44px;"></div>
+      </div>
+      <div id="trackList" class="trackList">
+        <div style="color:#333;">Loading tracks…</div>
+      </div>
+    </div>
+  `;
+  $("plBack").onclick = () => { showView("Library"); renderLibraryView(); };
+}
+
+function renderPlaylistTracks(){
+  const list = $("trackList");
+  if (!list) return;
+
+  if (!playlistTracks.length){
+    list.innerHTML = `<div style="color:#333;">No tracks found.</div>`;
     return;
   }
-  playlists.forEach(p => {
+
+  list.innerHTML = "";
+  playlistTracks.forEach((t, i) => {
     const el = document.createElement("div");
-    el.className = "playlist-item" + (currentPlaylist?.id === p.id ? " active" : "");
-    el.textContent = p.name;
-    el.title = p.name;
-    el.onclick = () => selectPlaylist(p);
+    el.className = "trackRow";
+    el.innerHTML = `
+      <div class="title">${i+1}. ${escapeHtml(t.name)}</div>
+      <div class="artist">${escapeHtml(t.artists?.map(a => a.name).join(", ") || "")}</div>
+    `;
+    el.onclick = async () => {
+      await api("/me/player/play", { method:"PUT", body: JSON.stringify({ uris: [t.uri] }) });
+      toast(`Playing: ${t.name}`);
+      showView("Now");
+      // Force immediate refresh
+      setTimeout(updateNowPlaying, 500);
+    };
     list.appendChild(el);
   });
 }
 
-async function selectPlaylist(p){
-  currentPlaylist = p;
-  renderPlaylists();
-  toast(`Selected: ${p.name}`);
-  // (Optional) load tracks here later; current UI focuses on now-playing + controls first.
-}
+/* ========= Spotify actions ========= */
 
 async function updateNowPlaying(){
   const data = await api("/me/player/currently-playing");
   if (!data?.item){
-    $("trackName").textContent = "No track playing";
-    $("artistName").textContent = "-";
-    $("albumName").textContent = "-";
-    $("art").textContent = "No track";
-    $("currentTime").textContent = "0:00";
-    $("duration").textContent = "0:00";
-    $("progressBar").max = 100;
-    $("progressBar").value = 0;
-    setStatus("Start playback on any Spotify device.");
+    now = { ...now, trackId:null, trackUri:null, name:"Not playing", artist:"-", album:"-", artUrl:null, isPlaying:false, progressMs:0, durationMs:0, liked:false };
+    renderNowView();
     return;
   }
 
   const track = data.item;
-  const progress = data.progress_ms || 0;
-  const duration = track.duration_ms || 0;
-  const volume = (data.device && typeof data.device.volume_percent === "number") ? data.device.volume_percent : 50;
-  isPlaying = !!data.is_playing;
+  const artUrl = track.album?.images?.[0]?.url || null;
 
-  const nowId = `${track.id}|${isPlaying ? 1 : 0}`;
-  if (nowId !== lastNowId){
-    $("trackName").textContent = track.name || "Unknown";
-    $("artistName").textContent = (track.artists || []).map(a => a.name).join(", ") || "-";
-    $("albumName").textContent = track.album?.name || "-";
+  now.trackId = track.id;
+  now.trackUri = track.uri;
+  now.name = track.name || "Unknown";
+  now.artist = track.artists?.map(a => a.name).join(", ") || "-";
+  now.album = track.album?.name || "-";
+  now.artUrl = artUrl;
+  now.isPlaying = !!data.is_playing;
+  now.progressMs = data.progress_ms || 0;
+  now.durationMs = track.duration_ms || 0;
 
-    const art = $("art");
-    if (showingCoverArt && track.album?.images?.length){
-      art.innerHTML = `<img src="${track.album.images[0].url}" alt="Album art">`;
-    } else {
-      art.innerHTML = `
-        <div style="text-align:center; padding:14px;">
-          <div style="font-size:44px; margin-bottom:10px;">♫</div>
-          <div style="font-size:12px; color:var(--text-secondary); line-height:1.3;">
-            ${escapeHtml(track.name)}<br>${escapeHtml(track.artists?.[0]?.name || "")}
-          </div>
-        </div>
-      `;
-    }
-
-    lastNowId = nowId;
+  // check liked state (official endpoint)
+  if (now.trackId){
+    const likedArr = await api(`/me/tracks/contains?ids=${encodeURIComponent(now.trackId)}`);
+    if (Array.isArray(likedArr)) now.liked = !!likedArr[0];
   }
 
-  if (duration > 0){
-    $("progressBar").max = duration;
-    $("progressBar").value = progress;
-    $("currentTime").textContent = formatTime(progress);
-    $("duration").textContent = formatTime(duration);
-  }
-
-  $("playPauseBtn").textContent = isPlaying ? "⏸" : "▶";
-
-  $("volumeControl").value = volume;
-  $("volumeLabel").textContent = `${volume}%`;
-
-  setStatus(`Active device: ${data.device?.name || "Unknown"}`);
+  // Only re-render if we're on Now view
+  if (!$("viewNow").classList.contains("hidden")) renderNowView();
 }
 
 async function togglePlayPause(){
-  if (isPlaying){
-    await api("/me/player/pause", { method: "PUT" });
+  if (now.isPlaying){
+    await api("/me/player/pause", { method:"PUT" });
   } else {
-    await api("/me/player/play", { method: "PUT" });
+    await api("/me/player/play", { method:"PUT" });
   }
-  setTimeout(updateNowPlaying, 450);
+  setTimeout(updateNowPlaying, 400);
 }
 
 async function nextTrack(){
-  await api("/me/player/next", { method: "POST" });
+  await api("/me/player/next", { method:"POST" });
   setTimeout(updateNowPlaying, 650);
 }
 
 async function previousTrack(){
-  await api("/me/player/previous", { method: "POST" });
+  await api("/me/player/previous", { method:"POST" });
   setTimeout(updateNowPlaying, 650);
 }
 
 async function seekTo(ms){
-  await api(`/me/player/seek?position_ms=${encodeURIComponent(ms)}`, { method: "PUT" });
+  await api(`/me/player/seek?position_ms=${encodeURIComponent(ms)}`, { method:"PUT" });
   setTimeout(updateNowPlaying, 250);
 }
 
-async function setVolume(vol){
-  const v = Math.max(0, Math.min(100, Math.round(vol)));
-  await api(`/me/player/volume?volume_percent=${encodeURIComponent(v)}`, { method: "PUT" });
-  $("volumeLabel").textContent = `${v}%`;
+async function toggleLikeCurrent(){
+  if (!now.trackId) return;
+
+  if (!now.liked){
+    // Save track to Liked Songs (official)
+    await api(`/me/tracks?ids=${encodeURIComponent(now.trackId)}`, { method:"PUT" }); // Save Tracks for User [web:206]
+    now.liked = true;
+    toast("Added to Liked Songs");
+  } else {
+    await api(`/me/tracks?ids=${encodeURIComponent(now.trackId)}`, { method:"DELETE" });
+    now.liked = false;
+    toast("Removed from Liked Songs");
+  }
+  renderNowView();
 }
 
-function adjustVolume(delta){
-  const current = parseInt($("volumeControl").value || "50", 10);
-  const next = Math.max(0, Math.min(100, current + delta));
-  $("volumeControl").value = next;
-  setVolume(next);
+/* ========= Library / playlist loading ========= */
+
+async function loadPlaylists(){
+  const data = await api("/me/playlists?limit=50");
+  playlists = data?.items || [];
 }
 
+async function loadAllPlaylistTracks(playlistId){
+  playlistTracks = [];
+  let offset = 0;
+  const limit = 100;
+
+  while (true){
+    const page = await api(`/playlists/${playlistId}/tracks?limit=${limit}&offset=${offset}`); // paging via limit/offset [web:201]
+    const items = page?.items || [];
+    const tracks = items.map(it => it?.track).filter(Boolean);
+    playlistTracks.push(...tracks);
+
+    if (!page?.next || items.length === 0) break;
+    offset += limit;
+
+    // Safety cap (optional): remove if you want truly all
+    if (playlistTracks.length > 2000) break;
+  }
+}
+
+/* ========= Boot ========= */
 async function main(){
-  const root = document.getElementById("app");
-  renderShell(root);
-
-  wireUI();
-
-  setStatus("Authorizing…");
+  renderApp(document.getElementById("app"));
   await ensureAuthedOrRedirect();
 
-  setStatus("Loading…");
-  await Promise.all([loadPlaylists(), updateNowPlaying()]);
+  renderNowView();
+  showView("Now");
 
-  window.setInterval(updateNowPlaying, Number.isFinite(POLL) ? POLL : 2500);
+  await loadPlaylists();
+
+  // Keep library view snappy (renders from cached playlists)
+  setInterval(updateNowPlaying, Number.isFinite(POLL) ? POLL : 2500);
+  await updateNowPlaying();
 }
 
 main().catch((e) => {
   console.error(e);
-  const root = document.getElementById("app");
-  root.innerHTML = `
+  document.getElementById("app").innerHTML = `
     <div style="padding:20px; color:white;">
       <h2 style="margin-bottom:10px;">Spotify-Deck error</h2>
       <pre style="white-space:pre-wrap; color:#ff6b6b;">${String(e.message || e)}</pre>
-      <p style="margin-top:10px; color:#b3b3b3;">
-        Check your <code>.env</code> values and the Redirect URI in Spotify dashboard.
-      </p>
     </div>
   `;
 });
