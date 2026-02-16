@@ -24,6 +24,11 @@ export function toast(msg, ms = 2200) {
   el._t = setTimeout(() => el.classList.add("hidden"), ms);
 }
 
+export function setStatus(msg) {
+  const el = document.getElementById("statusLine");
+  if (el) el.textContent = msg || "";
+}
+
 export function formatTime(ms) {
   const s = Math.max(0, Math.floor(ms / 1000));
   const m = Math.floor(s / 60);
