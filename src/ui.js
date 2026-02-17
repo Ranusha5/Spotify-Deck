@@ -4,14 +4,23 @@ export function renderApp(root) {
       <div id="viewNow" class="view"></div>
       <div id="viewLibrary" class="view hidden"></div>
       <div id="viewPlaylist" class="view hidden"></div>
+      <div id="viewQueue" class="view hidden"></div>
+      <div id="viewDevices" class="view hidden"></div>
+      <div id="viewLastPlayed" class="view hidden"></div>
+      <div id="viewStandby" class="view hidden"></div>
     </div>
 
     <div id="toast" class="toast hidden"></div>
+
+    <div id="ledIndicator">
+      <div id="ledColorBox"></div>
+      <div id="ledLabel">LED</div>
+    </div>
   `;
 }
 
 export function showView(name) {
-  const views = ["Now", "Library", "Playlist"];
+  const views = ["Now", "Library", "Playlist", "Queue", "Devices", "LastPlayed", "Standby"];
   for (const v of views) {
     document.getElementById(`view${v}`).classList.toggle("hidden", v !== name);
   }

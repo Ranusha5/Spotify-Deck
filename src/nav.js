@@ -1,6 +1,6 @@
 const IDLE_MS = 5000;
 
-export function createNavigator({ getItems, onActivate, onBack }) {
+export function createNavigator({ getItems, onActivate, onBack, onAnyInput }) {
   let index = 0;
   let idleTimer = null;
 
@@ -16,6 +16,11 @@ export function createNavigator({ getItems, onActivate, onBack }) {
     showFocus();
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(hideFocus, IDLE_MS);
+  }
+
+  function anyInput() {
+    onAnyInput?.();
+    resetIdle();
   }
 
   function readItems() {
@@ -52,19 +57,19 @@ export function createNavigator({ getItems, onActivate, onBack }) {
 
     index = clamp(index + delta, items.length);
     sync();
-    resetIdle();
+    anyInput();
   }
 
   function activate() {
     const items = readItems();
     if (items.length === 0) return;
 
-    resetIdle();
+    anyInput();
     onActivate?.(items[index], index);
   }
 
   function back() {
-    resetIdle();
+    anyInput();
     onBack?.();
   }
 
@@ -72,7 +77,7 @@ export function createNavigator({ getItems, onActivate, onBack }) {
     const items = readItems();
     index = clamp(i, items.length);
     sync();
-    resetIdle();
+    anyInput();
   }
 
   function attach() {
@@ -82,10 +87,14 @@ export function createNavigator({ getItems, onActivate, onBack }) {
       const keys = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter", "Backspace", "Escape"];
       if (keys.includes(e.key)) e.preventDefault();
 
+      // Any key counts as input for wake behavior
+      if (e.key) onAnyInput?.();
+
       if (e.key === "ArrowDown" || e.key === "ArrowRight") move(+1);
       else if (e.key === "ArrowUp" || e.key === "ArrowLeft") move(-1);
       else if (e.key === "Enter") activate();
       else if (e.key === "Backspace" || e.key === "Escape") back();
+      else resetIdle();
     });
   }
 

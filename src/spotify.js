@@ -75,12 +75,9 @@ export function isAuthed(){
 }
 
 export async function ensureAuthedOrRedirect(){
-  // Handle callback first
   await handleCallbackIfPresent();
   loadSession();
   if (accessToken) return;
-
-  // No login screen: auto-redirect to Spotify
   await beginAuthRedirect();
 }
 
@@ -109,7 +106,7 @@ async function beginAuthRedirect(){
     code_challenge: challenge
   });
 
-  window.location = `${AUTH_ENDPOINT}?${params.toString()}`; // redirects user to Spotify login/consent [web:88]
+  window.location = `${AUTH_ENDPOINT}?${params.toString()}`;
 }
 
 async function handleCallbackIfPresent(){
@@ -191,7 +188,7 @@ async function refreshIfNeeded(){
   return true;
 }
 
-export async function api(endpoint, options = {}){
+export async function apiRaw(endpoint, options = {}){
   await refreshIfNeeded();
   if (!accessToken) return null;
 
@@ -204,14 +201,21 @@ export async function api(endpoint, options = {}){
     }
   });
 
-  if (resp.status === 204 || resp.status === 202) return { ok: true };
-
   if (resp.status === 401){
     setStatus("Session expired. Redirecting to Spotify login…");
     logout();
     await beginAuthRedirect();
     return null;
   }
+
+  return resp;
+}
+
+export async function api(endpoint, options = {}){
+  const resp = await apiRaw(endpoint, options);
+  if (!resp) return null;
+
+  if (resp.status === 204 || resp.status === 202) return { ok: true };
 
   if (!resp.ok){
     let msg = `Spotify API error ${resp.status}`;
