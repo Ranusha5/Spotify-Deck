@@ -110,8 +110,11 @@ body.nav-dim .nav-focus {
   border-radius: 14px;
   overflow: hidden;
   background: rgba(0,0,0,0.25);
+  box-shadow: 0 10px 22px rgba(0,0,0,0.35);
 }
-.cover img{ width: 100%; height: 100%; object-fit: cover; display: block; }
+
+
+.cover img{ width: 100%; height: 100%; object-fit: cover; display: block; filter: drop-shadow(0 6px 10px rgba(0,0,0,0.35)); }
 .cover.small{ width: 90px; height: 90px; border-radius: 12px; }
 
 .meta{ flex: 1; min-width: 0; }

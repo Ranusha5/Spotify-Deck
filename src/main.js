@@ -3,6 +3,12 @@ import { renderApp, showView, toast, formatTime, escapeHtml, setStatus } from ".
 import { ensureAuthedOrRedirect, api, apiRaw } from "./spotify.js";
 import { createNavigator } from "./nav.js";
 
+const IDLE_TO_STANDBY_MS = 2 * 60_000;
+
+let lastUserInputAt = Date.now();
+let autoSwitchedThisSession = false; // only switch to Now once after playback starts
+let wasPlayingTrack = false; 
+
 const POLL = parseInt(import.meta.env.VITE_POLL_INTERVAL_MS || "1500", 10);
 const NO_PLAYBACK_TO_STANDBY_MS = 3 * 60_000;
 
@@ -169,9 +175,11 @@ function goto(view) {
 }
 
 function notifyUserInput() {
-  // Wake behavior: any input in standby wakes to Library
+  lastUserInputAt = Date.now();
+
   if (uiState === "STANDBY") {
     setState("LIBRARY");
+    return;
   }
 }
 
@@ -549,31 +557,39 @@ function renderStandbyView(){
 
 /* ---------------- Spotify: polling + controls ---------------- */
 
-async function pollPlayback(){
-  // Use /me/player so we can treat 204 as "no playback"
-  const resp = await apiRaw("/me/player");
+async function pollPlayback() {
+  const resp = await apiRaw("/me/player"); // can be 204 No Content [web:34]
   const nowMs = Date.now();
 
   if (!resp) return;
 
+  // 204 = no playback info (normal) [web:145]
   if (resp.status === 204) {
+    wasPlayingTrack = false;
     onNoPlayback(nowMs);
     return;
   }
 
   if (!resp.ok) {
+    wasPlayingTrack = false;
     onNoPlayback(nowMs);
     return;
   }
 
   const data = await resp.json();
-  const item = data?.item;
-  const isPlaying = !!data?.is_playing;
-  const isTrack = item && item.type === "track";
+  const item = data?.item;                 // can be null [web:34]
+  const isPlaying = !!data?.is_playing;    // playback flag [web:34]
+  const isTrack = !!item && item.type === "track";
 
-  if (isPlaying && isTrack) {
-    noPlaybackSince = null;
+  const playingTrack = isPlaying && isTrack;
 
+  // Detect "first instance of a song played" (rising edge)
+  if (playingTrack && !wasPlayingTrack) {
+    autoSwitchedThisSession = false;
+  }
+
+  if (playingTrack) {
+    // Update now-playing model
     now.id = item.id || null;
     now.name = item.name || "Unknown";
     now.artist = item.artists?.map(a => a.name).join(", ") || "-";
@@ -583,25 +599,29 @@ async function pollPlayback(){
     now.progressMs = data.progress_ms || 0;
     now.durationMs = item.duration_ms || 0;
 
-    // Update bg + LED color (best-effort)
-    if (now.artUrl) {
-      const rgb = await getAverageColor(now.artUrl);
-      lastPlayed = { name: now.name, artist: now.artist, album: now.album, artUrl: now.artUrl, atMs: nowMs, rgb };
-      setNowPlayingBackground(rgb);
-      if (uiState !== "STANDBY") setLedBaseColor(rgb, 900);
+    // Update bg + LED color (best-effort; may fall back if CORS)
+    let rgb = { r: 30, g: 30, b: 30 };
+    if (now.artUrl) rgb = await getAverageColor(now.artUrl);
+
+    lastPlayed = { name: now.name, artist: now.artist, album: now.album, artUrl: now.artUrl, atMs: nowMs, rgb };
+    setNowPlayingBackground(rgb);
+    if (uiState !== "STANDBY") setLedBaseColor(rgb, 900);
+
+    // Only auto-switch to NOW_PLAYING once per session.
+    // After that, stay on whatever page the user chose.
+    if (!autoSwitchedThisSession) {
+      autoSwitchedThisSession = true;
+      setState("NOW_PLAYING");
     } else {
-      const rgb = { r: 30, g: 30, b: 30 };
-      lastPlayed = { name: now.name, artist: now.artist, album: now.album, artUrl: null, atMs: nowMs, rgb };
-      setNowPlayingBackground(rgb);
-      if (uiState !== "STANDBY") setLedBaseColor(rgb, 600);
+      if (currentView === "Now") renderNowView();
     }
 
-    if (uiState !== "NOW_PLAYING") setState("NOW_PLAYING");
-    else if (currentView === "Now") renderNowView();
+    wasPlayingTrack = true;
     return;
   }
 
-  // not playing OR not a track OR item null
+  // Not playing a track (paused, item null, episode, etc.) [web:34]
+  wasPlayingTrack = false;
   onNoPlayback(nowMs);
 }
 
@@ -698,6 +718,13 @@ async function loadAllPlaylistTracks(playlistId){
 async function main(){
   renderApp(document.getElementById("app"));
   nav.attach();
+
+  setInterval(() => {
+  if (uiState === "STANDBY") return;
+  if (Date.now() - lastUserInputAt >= IDLE_TO_STANDBY_MS) {
+    setState("STANDBY");
+  }
+}, 500);
 
   // Global test hotkeys for LED brightness (simulate 3rd encoder)
   window.addEventListener("keydown", (e) => {
