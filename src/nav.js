@@ -4,10 +4,6 @@ export function createNavigator({ getItems, onActivate, onBack }) {
   let index = 0;
   let idleTimer = null;
 
-  function clearFocusClass(items) {
-    items.forEach(el => el.classList.remove("nav-focus"));
-  }
-
   function showFocus() {
     document.body.classList.remove("nav-dim");
   }
@@ -19,7 +15,16 @@ export function createNavigator({ getItems, onActivate, onBack }) {
   function resetIdle() {
     showFocus();
     if (idleTimer) clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => hideFocus(), IDLE_MS);
+    idleTimer = setTimeout(hideFocus, IDLE_MS);
+  }
+
+  function readItems() {
+    try {
+      const items = getItems?.();
+      return Array.isArray(items) ? items : [];
+    } catch {
+      return [];
+    }
   }
 
   function clamp(i, n) {
@@ -27,28 +32,35 @@ export function createNavigator({ getItems, onActivate, onBack }) {
     return (i + n) % n;
   }
 
-  function sync(items) {
-    if (!items.length) return;
+  function sync() {
+    const items = readItems();
+    if (items.length === 0) return;
+
     index = Math.min(index, items.length - 1);
-    clearFocusClass(items);
+
+    for (const el of items) el.classList.remove("nav-focus");
     const el = items[index];
+    if (!el) return;
+
     el.classList.add("nav-focus");
     el.scrollIntoView?.({ block: "nearest" });
   }
 
   function move(delta) {
-    const items = getItems();
-    if (!items.length) return;
+    const items = readItems();
+    if (items.length === 0) return;
+
     index = clamp(index + delta, items.length);
-    sync(items);
+    sync();
     resetIdle();
   }
 
   function activate() {
-    const items = getItems();
-    if (!items.length) return;
+    const items = readItems();
+    if (items.length === 0) return;
+
     resetIdle();
-    onActivate(items[index], index);
+    onActivate?.(items[index], index);
   }
 
   function back() {
@@ -57,31 +69,24 @@ export function createNavigator({ getItems, onActivate, onBack }) {
   }
 
   function setIndex(i) {
-    const items = getItems();
+    const items = readItems();
     index = clamp(i, items.length);
-    sync(items);
+    sync();
     resetIdle();
   }
 
   function attach() {
-    // start visible, but will auto-hide after idle
     resetIdle();
 
     window.addEventListener("keydown", (e) => {
-      // Prevent browser scrolling
-      if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Enter","Backspace","Escape"].includes(e.key)) {
-        e.preventDefault();
-      }
+      const keys = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter", "Backspace", "Escape"];
+      if (keys.includes(e.key)) e.preventDefault();
 
       if (e.key === "ArrowDown" || e.key === "ArrowRight") move(+1);
       else if (e.key === "ArrowUp" || e.key === "ArrowLeft") move(-1);
       else if (e.key === "Enter") activate();
       else if (e.key === "Backspace" || e.key === "Escape") back();
-      else return;
     });
-
-    // Any wheel/scroll event should also “wake” highlight (optional)
-    window.addEventListener("mousemove", resetIdle, { passive: true });
   }
 
   return { attach, move, activate, back, setIndex, sync };
