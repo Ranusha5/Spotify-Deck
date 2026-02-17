@@ -150,20 +150,61 @@ body.nav-dim .nav-focus {
   justify-content: space-between;
   padding: 10px 12px;
 }
+
 .libGrid{
-  display:grid;
-  grid-template-columns: repeat(2, 1fr);
+  display: grid;
+  grid-template-columns: repeat(3, 1fr); /* 3 per row */
   gap: 10px;
   padding: 10px 12px;
+  align-content: start;
 }
+
 .tile{
-  background: #fff;
+  background: transparent;
   border-radius: 12px;
   overflow: hidden;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
 }
-.tile img{ width: 100%; height: 96px; object-fit: cover; background: #ddd; display:block; }
-.tname{ padding: 10px; font-weight: 900; font-size: 12px; }
+
+.tileImg{
+  width: 100%;
+  aspect-ratio: 1 / 1;           /* square cover */
+  border-radius: 12px;
+  overflow: hidden;
+  background: #ddd;
+  box-shadow: 0 6px 14px rgba(0,0,0,0.10);
+}
+
+.tileImg img{
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.tileImgPh{
+  width: 100%;
+  height: 100%;
+  background: #d7d7d7;
+}
+
+.tname{
+  margin-top: 6px;
+  padding: 0 2px;
+  font-weight: 900;
+  font-size: 12px;
+  line-height: 1.15;
+  color: #111;
+
+  /* keep names tidy */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 
 /* Playlist / Queue / Devices list */
 .pl, .queue, .devices { height: 100%; background: #f2f2f2; color: #111; }

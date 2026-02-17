@@ -335,9 +335,12 @@ function renderLibraryView(){
     const img = p.images?.[0]?.url || "";
     const el = document.createElement("div");
     el.className = "tile nav-item";
+    el.className = "tile nav-item";
     el.innerHTML = `
-      ${img ? `<img src="${img}" alt="">` : `<img alt="">`}
-      <div class="tname">${escapeHtml(p.name)}</div>
+    <div class="tileImg">
+        ${img ? `<img src="${img}" alt="">` : `<div class="tileImgPh"></div>`}
+    </div>
+    <div class="tname">${escapeHtml(p.name)}</div>
     `;
     el.onclick = async () => {
       selectedPlaylist = p;
